@@ -21,19 +21,15 @@
 
 from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, ChoicesSetting
 
-# See 23A512/23LC512 datasheet, INSTRUCTION SET
+# See 25LC256 datasheet, INSTRUCTION SET
 WRITE_INS = b'\x02'
 READ_INS  = b'\x03'
-RMDR_INS  = b'\x05'
-WRMR_INS  = b'\x01'
+WREN_INS = b'\x06'
+WRDI_INS = b'\x04'
+RDSR_INS = b'\x05'
+WRSR_INS = b'\x01'
 
-# Operation Modes of the 23A512/23LC512
-BYTE_MODE       = 0x00
-PAGE_MODE       = 0x02
-SEQUENTIAL_MODE = 0x01
-RESERVED        = 0x03
-
-# Analyzer states for Byte mode
+# transaction states
 START      = 0
 GET_INS    = 1
 GET_ADDR_H = 2
@@ -41,9 +37,7 @@ GET_ADDR_L = 3
 GET_DATA   = 4
 
 # High level analyzers must subclass the HighLevelAnalyzer class.
-class HLA_23LC512_SPI(HighLevelAnalyzer):
-
-  mode_setting = ChoicesSetting(choices=('Sequential', 'Byte', 'Page'))
+class HLA_25LC256_SPI(HighLevelAnalyzer):
 
   result_types = {
     'Instruction': {
@@ -54,9 +48,6 @@ class HLA_23LC512_SPI(HighLevelAnalyzer):
     },
     'Data': {
       'format': 'Data:  {{data.data}}'
-    },
-    'Mode': {
-      'format': '{{data.mode}} Mode'
     }
   }
 
@@ -72,27 +63,54 @@ class HLA_23LC512_SPI(HighLevelAnalyzer):
       return 'Write'
     elif instruction == READ_INS:
       return 'Read'
-    elif instruction == WRMR_INS:
-      return 'Write Mode Register'
-    elif instruction == RMDR_INS:
-      return 'Read Mode Register'
+    elif instruction == WRSR_INS:
+      return 'Write Status Register'
+    elif instruction == RDSR_INS:
+      return 'Read Status Register'
+    elif instruction == WREN_INS:
+      return 'write enable'
+    elif instruction == WRDI_INS:
+      return 'write disable'
     else:
       return 'Unknown'
 
-  # Decodes the mode register value, see
-  # 2.5 Read Mode Register Instruction of datasheet
-  def decode_mode(self, mode_register):
-    # Mode value is in Bits 7 and 6
-    mode = (mode_register & 0xc0) >> 6
-    return mode
+  def decode_WIP(self, status_register):
+    # WIP is in bit 0
+    wip = (status_register & 0x01)
+    return wip
 
-  def mode_str(self, mode):
-    if mode == BYTE_MODE:
-      return 'Byte'
-    elif mode == PAGE_MODE:
-      return 'Page'
-    elif mode == SEQUENTIAL_MODE:
-      return 'Sequential'
+  def decode_writeprotect(self, status_register):
+    # write protect is in bit 1
+    writeprotect = (status_register & 0x02)>>1
+    return writeprotect
+
+  def decode_locked(self, status_register):
+    # lock is in bits 3,2
+    locked = (status_register & 0x0C)>>2
+    return locked
+
+  
+  def writeprotect_str(self, writeprotect):
+    if writeprotect == WP_PROTECTED:
+      return 'protected'
+    elif writeprotect == WP_UNPROTECTED:
+      return 'unprotected'
+
+  def WIP_str(self, wip):
+    if wip == WIP_ASSERT:
+      return 'Write in Progress'
+    elif wip == WIP_DEASSERT:
+      return 'Write not in progress'
+  
+  def locked_str(self, locked):
+    if locked == NONE_LOCKED:
+      return 'none locked'
+    elif locked == QUARTER_LOCKED:
+      return 'quarter locked'
+    elif locked == HALF_LOCKED:
+      return 'half locked'
+    elif locked == FULL_LOCKED:
+      return 'FULL locked'
 
   def decode(self, frame: AnalyzerFrame):
     # SPI frame types are: enable, result, and disable
@@ -112,9 +130,11 @@ class HLA_23LC512_SPI(HighLevelAnalyzer):
           
         if self.instruction in [WRITE_INS, READ_INS]:
           self.state = GET_ADDR_H           # Next byte will be the high byte of the address
-        elif self.instruction in [WRMR_INS, RMDR_INS]:
+        elif self.instruction in [RDSR_INS,WRSR_INS]:
           self.state = GET_DATA             # Next byte will be mode register value
-
+        elif self.instruction in [WREN_INS, WRDI_INS]:
+          self.state = GET_DATA             # Next byte will be mode register value
+        
         return AnalyzerFrame('Instruction', frame.start_time, frame.end_time, {
           'instruction': self.instruction_str(self.instruction)
         })
@@ -134,8 +154,7 @@ class HLA_23LC512_SPI(HighLevelAnalyzer):
 
         # In Sequential mode we want to accumulate all of the data
         # received in the coming frames
-        if self.mode_setting == 'Sequential':
-          self.sequential_frame_count = 0
+        self.sequential_frame_count = 0
 
         return AnalyzerFrame('Address', self.address_frame_start, frame.end_time, {
           'address': self.address
@@ -145,50 +164,38 @@ class HLA_23LC512_SPI(HighLevelAnalyzer):
 
         if self.instruction == WRITE_INS:
 
-          if self.mode_setting == 'Byte':
-            self.data = frame.data['mosi'][0]
+          # only sequential mode!
+          if self.sequential_frame_count == 0:
             self.data_frame_start = frame.start_time
-            self.data_frame_end   = frame.end_time
 
-          elif self.mode_setting == 'Sequential':
-
-            if self.sequential_frame_count == 0:
-              self.data_frame_start = frame.start_time
-
-            self.sequential_frame_count += 1
-            self.data += frame.data['mosi']
-            self.data_frame_end = frame.end_time
+          self.sequential_frame_count += 1
+          self.data += frame.data['mosi']
+          self.data_frame_end = frame.end_time
   
         elif self.instruction == READ_INS:
 
-          if self.mode_setting == 'Byte':
-            self.data = frame.data['miso'][0]
+          # only sequential mode
+          if self.sequential_frame_count == 0:
             self.data_frame_start = frame.start_time
-            self.data_frame_end   = frame.end_time
 
-          elif self.mode_setting == 'Sequential':
+          self.sequential_frame_count += 1
+          self.data += frame.data['miso']
+          self.data_frame_end = frame.end_time
 
-            if self.sequential_frame_count == 0:
-              self.data_frame_start = frame.start_time
-
-            self.sequential_frame_count += 1
-            self.data += frame.data['miso']
-            self.data_frame_end = frame.end_time
-
-
-        elif self.instruction == WRMR_INS:
+        # [WREN_INS, WRDI_INS, RDSR_INS,WRSR_INS]
+        elif self.instruction == WRSR_INS:
           self.data = frame.data['mosi'][0]
 
-          mode = self.decode_mode(self.data)
-          return AnalyzerFrame('Mode', frame.start_time, frame.end_time, {
-            'mode':  self.mode_str(mode)
+          locked = self.decode_locked(self.data)
+          return AnalyzerFrame('Status', frame.start_time, frame.end_time, {
+            'locked':  self.locked_str(locked)
           })
 
-        elif self.instruction == RMDR_INS:
+        elif self.instruction == RDSR_INS:
           self.data = frame.data['miso'][0]
 
           mode = self.decode_mode(self.data)
-          return AnalyzerFrame('Mode', frame.start_time, frame.end_time, {
+          return AnalyzerFrame('Status', frame.start_time, frame.end_time, {
             'mode':  self.mode_str(mode)
           })
 
