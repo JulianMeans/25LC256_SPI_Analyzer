@@ -1,13 +1,13 @@
 {
-  "name": "23LC512 SPI",
+  "name": "25LC256 SPI",
   "apiVersion": "1.0.0",
-  "author": "iAchieved.it",
+  "author": "meansofinvention",
   "version": "0.0.3",
-  "description": "Decode 23LC512 SPI",
+  "description": "Decode 5LC256 SPI",
   "extensions": {
-    "23LC512 SPI": {
+    "25LC256 SPI": {
       "type": "HighLevelAnalyzer",
-      "entryPoint": "HighLevelAnalyzer.HLA_23LC512_SPI"
+      "entryPoint": "HighLevelAnalyzer.HLA_25LC256_SPI"
     }
   }
 }
