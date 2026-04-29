@@ -1,5 +1,6 @@
 #
 # Copyright (c) 2023 iAchieved.it LLC
+# Copyright (c) 2026 Means of Invention Pty. Ltd.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -68,12 +69,13 @@ class HLA_25LC256_SPI(HighLevelAnalyzer):
     elif instruction == RDSR_INS:
       return 'Read Status Register'
     elif instruction == WREN_INS:
-      return 'write enable'
+      return 'Write Enable'
     elif instruction == WRDI_INS:
-      return 'write disable'
+      return 'Write Disable'
     else:
       return 'Unknown'
 
+  # status register bitfield functions
   def decode_WIP(self, status_register):
     # WIP is in bit 0
     wip = (status_register & 0x01)
@@ -89,7 +91,7 @@ class HLA_25LC256_SPI(HighLevelAnalyzer):
     locked = (status_register & 0x0C)>>2
     return locked
 
-  
+  # status register bitfield strings
   def writeprotect_str(self, writeprotect):
     if writeprotect == WP_PROTECTED:
       return 'protected'
@@ -104,13 +106,13 @@ class HLA_25LC256_SPI(HighLevelAnalyzer):
   
   def locked_str(self, locked):
     if locked == NONE_LOCKED:
-      return 'none locked'
+      return 'None'
     elif locked == QUARTER_LOCKED:
-      return 'quarter locked'
+      return 'Quarter'
     elif locked == HALF_LOCKED:
-      return 'half locked'
+      return 'Half'
     elif locked == FULL_LOCKED:
-      return 'FULL locked'
+      return 'Full'
 
   def decode(self, frame: AnalyzerFrame):
     # SPI frame types are: enable, result, and disable
@@ -133,7 +135,7 @@ class HLA_25LC256_SPI(HighLevelAnalyzer):
         elif self.instruction in [RDSR_INS,WRSR_INS]:
           self.state = GET_DATA             # Next byte will be mode register value
         elif self.instruction in [WREN_INS, WRDI_INS]:
-          self.state = GET_DATA             # Next byte will be mode register value
+          self.state = GET_INS             # no register to read or write here, command only, no next byte.
         
         return AnalyzerFrame('Instruction', frame.start_time, frame.end_time, {
           'instruction': self.instruction_str(self.instruction)
